@@ -1,0 +1,11 @@
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Runtime files created next to the exe
+state.flag
+toggle.log
+
+__pycache__/
+*.pyc
