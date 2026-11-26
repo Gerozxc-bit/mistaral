@@ -95,7 +95,7 @@ def read_flag():
             raw = f.read().strip()
         value = int(raw)
         if value in (800, 1920):
-            log("state.flag прочитан: {} -> следующая цель {}".format(raw, 800 if value == 1920 else 1920))
+            log("state.flag прочитан: {} — переключаем на {}x1080".format(raw, value))
             return value
         # Число есть, но не 800 и не 1920 — считаем флаг повреждённым.
         log("state.flag содержит неожиданное значение '{}' — трактуем как отсутствие флага".format(raw))
@@ -128,8 +128,13 @@ def get_current_mode(device_name):
     return win32api.EnumDisplaySettings(device_name, win32con.ENUM_CURRENT_SETTINGS)
 
 
-def is_mode_available(device_name, width, height):
-    """Проверяет, что режим width x height есть в списке EnumDisplaySettings."""
+def find_listed_mode(device_name, width, height, frequency=None):
+    """Ищет режим width x height в списке EnumDisplaySettings.
+
+    Возвращает PyDEVMODE этого режима (как его отдал драйвер) или None.
+    Если режимов несколько — prefers режим с частотой frequency.
+    """
+    found = []
     index = 0
     while True:
         try:
@@ -138,9 +143,20 @@ def is_mode_available(device_name, width, height):
             # pywin32 бросает исключение, когда индексы режимов закончились.
             break
         if mode.PelsWidth == width and mode.PelsHeight == height:
-            return True
+            found.append(mode)
         index += 1
-    return False
+    if not found:
+        return None
+    if frequency is not None:
+        for mode in found:
+            if mode.DisplayFrequency == frequency:
+                return mode
+    return found[0]
+
+
+def is_mode_available(device_name, width, height):
+    """Проверяет, что режим width x height есть в списке EnumDisplaySettings."""
+    return find_listed_mode(device_name, width, height) is not None
 
 
 def apply_resolution(device_name, current_mode, width, height):
@@ -149,13 +165,19 @@ def apply_resolution(device_name, current_mode, width, height):
     Возвращает код результата (0 = DISP_CHANGE_SUCCESSFUL).
     Частота обновления сохраняется текущая.
     """
-    # ChangeDisplaySettingsEx принимает только PyDEVMODEW (не кортеж),
-    # поэтому берём текущий режим и меняем в нём только разрешение.
-    # dmDisplayFrequency и dmBitsPerPel остаются текущими — частоту не трогаем.
-    devmode = win32api.EnumDisplaySettings(device_name, win32con.ENUM_CURRENT_SETTINGS)
-    devmode.PelsWidth = width
-    devmode.PelsHeight = height
-    return win32api.ChangeDisplaySettingsEx(device_name, devmode, win32con.CDS_UPDATEREGISTRY)
+    # Берём PyDEVMODE именно из списка режимов драйвера: модификация
+    # «текущего» DEVMODE некоторые драйверы отвергают (DISP_CHANGE_BADMODE)
+    # при возврате с низкого разрешения на родное.
+    devmode = find_listed_mode(device_name, width, height, current_mode.DisplayFrequency)
+    if devmode is None:
+        return win32con.DISP_CHANGE_BADMODE
+    result = win32api.ChangeDisplaySettingsEx(device_name, devmode, win32con.CDS_UPDATEREGISTRY)
+    if result == win32con.DISP_CHANGE_BADMODE:
+        # Повторная попытка с CDS_RESET: заставляет драйвер переинициализировать
+        # список режимов (помогает при возврате на родное разрешение).
+        reset_flags = win32con.CDS_UPDATEREGISTRY | getattr(win32con, "CDS_RESET", 0x40000000)
+        result = win32api.ChangeDisplaySettingsEx(device_name, devmode, reset_flags)
+    return result
 
 
 # --- Основная логика ---------------------------------------------------------
