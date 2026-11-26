@@ -149,9 +149,12 @@ def apply_resolution(device_name, current_mode, width, height):
     Возвращает код результата (0 = DISP_CHANGE_SUCCESSFUL).
     Частота обновления сохраняется текущая.
     """
-    # Кортеж: (dmPelsWidth, dmPelsHeight, dmBitsPerPel, dmDisplayFrequency).
-    # dmDisplayFrequency = текущая — частоту не трогаем.
-    devmode = (width, height, current_mode.BitsPerPel, current_mode.DisplayFrequency)
+    # ChangeDisplaySettingsEx принимает только PyDEVMODEW (не кортеж),
+    # поэтому берём текущий режим и меняем в нём только разрешение.
+    # dmDisplayFrequency и dmBitsPerPel остаются текущими — частоту не трогаем.
+    devmode = win32api.EnumDisplaySettings(device_name, win32con.ENUM_CURRENT_SETTINGS)
+    devmode.PelsWidth = width
+    devmode.PelsHeight = height
     return win32api.ChangeDisplaySettingsEx(device_name, devmode, win32con.CDS_UPDATEREGISTRY)
 
 
